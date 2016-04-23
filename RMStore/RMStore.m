@@ -644,7 +644,12 @@ typedef void (^RMStoreSuccessBlock)();
 {
     SKPayment *payment = transaction.payment;
 	NSString* productIdentifier = payment.productIdentifier;
-    [queue finishTransaction:transaction];
+	/**
+	 NOTE:
+	 From the docs: Your application should call finishTransaction: only after it has successfully processed the transaction and unlocked the functionality purchased by the user.
+	 */
+	 
+    //[queue finishTransaction:transaction];
     [self.transactionPersistor persistTransaction:transaction];
     
     RMAddPaymentParameters *wrapper = [self popAddPaymentParametersForIdentifier:productIdentifier];
@@ -667,6 +672,11 @@ typedef void (^RMStoreSuccessBlock)();
     {
         [self notifyRestoreTransactionFinishedIfApplicableAfterTransaction:transaction];
     }
+}
+
+- (void) transactionIsSuccessfullyProcessed:(SKPaymentTransaction *)transaction
+{
+	[[SKPaymentQueue defaultQueue] finishTransaction:transaction];
 }
 
 - (void)notifyRestoreTransactionFinishedIfApplicableAfterTransaction:(SKPaymentTransaction*)transaction

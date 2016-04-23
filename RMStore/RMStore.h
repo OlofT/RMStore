@@ -113,6 +113,12 @@ extern NSInteger const RMStoreErrorCodeUnableToCompleteVerification;
                         onSuccess:(void (^)(NSArray *transactions))successBlock
                           failure:(void (^)(NSError *error))failureBlock __attribute__((availability(ios,introduced=7.0)));
 
+/**
+ A function to mark transactions as processed after beeing handled and given to the user - will remain in the queue until handled and thus will prevent any Consumables from dissapearing before handled.
+ From the docs: Your application should call finishTransaction: only after it has successfully processed the transaction and unlocked the functionality purchased by the user.
+ */
+- (void) transactionIsSuccessfullyProcessed:(SKPaymentTransaction *)transaction;
+
 #pragma mark Receipt
 ///---------------------------------------------
 /// @name Getting the receipt
