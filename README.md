@@ -6,275 +6,37 @@
 
 A lightweight iOS library for In-App Purchases.
 
-RMStore adds [blocks](#storekit-with-blocks) and [notifications](#notifications) to StoreKit, plus [receipt verification](#receipt-verification), [content downloads](#downloading-content) and [transaction persistence](#transaction-persistence). All in one class without external dependencies. Purchasing a product is as simple as:
+RMStore adds [blocks](#storekit-with-blocks) and [notifications](#notifications) to StoreKit, plus [receipt verification](#receipt-verification), [content downloads](#downloading-content) and [transaction persistence](#transaction-persistence). All in one class without external dependencies. 
 
-```objective-c
-[[RMStore defaultStore] addPayment:productID success:^(SKPaymentTransaction *transaction) {
-    NSLog(@"Purchased!");
-} failure:^(SKPaymentTransaction *transaction, NSError *error) {
-    NSLog(@"Something went wrong");
-}];
-```
+##Warning
 
-##Installation
-
-Using [CocoaPods](http://cocoapods.org/):
-
-```ruby
-pod 'RMStore', '~> 0.7'
-```
-
-Or add the files from the [RMStore](https://github.com/robotmedia/RMStore/tree/master/RMStore) directory if you're doing it manually.
-
-Check out the [wiki](https://github.com/robotmedia/RMStore/wiki/Installation) for more options.
+This cannot be used unless you ONLY use non-consumable in-apps. Do yourself a favor and use the APIs directly instead - it isn't that much code and you will need to know them well in order to mitigate the bugs Apple has in store for you, hidden in the framework.
 
 ##StoreKit with blocks
 
-RMStore adds blocks to all asynchronous StoreKit operations.
-
-###Requesting products
-
-```objective-c
-NSSet *products = [NSSet setWithArray:@[@"fabulousIdol", @"rootBeer", @"rubberChicken"]];
-[[RMStore defaultStore] requestProducts:products success:^(NSArray *products, NSArray *invalidProductIdentifiers) {
-    NSLog(@"Products loaded");
-} failure:^(NSError *error) {
-    NSLog(@"Something went wrong");
-}];
-```
+RMStore adds blocks to all asynchronous StoreKit operations. And StoreKit does not work with that - its just not designed around that kind of principle. 
 
 ###Add payment
 
-```objective-c
-[[RMStore defaultStore] addPayment:@"waxLips" success:^(SKPaymentTransaction *transaction) {
-    NSLog(@"Product purchased");
-} failure:^(SKPaymentTransaction *transaction, NSError *error) {
-    NSLog(@"Something went wrong");
-}];
-```
+Adding a payment sends a asynchronous call to Apple and storing a block - hoping they will correlate when the request comes back, which cannot be guaranteed.
 
-###Restore transactions
+Imagine you send of two purchases with the same productId, the first you cancel, the second is paid. RMStore will take the first that come back and send it with the first block, and the second one with the second. It may not be a big deal if these come in the wrong order - one will be paid and that will be handled. The problem arises when you get "respawned purchases".
 
-```objective-c
-[[RMStore defaultStore] restoreTransactionsOnSuccess:^(NSArray *transactions){
-    NSLog(@"Transactions restored");
-} failure:^(NSError *error) {
-    NSLog(@"Something went wrong");
-}];
-```
+###Respawned purchases
 
-###Refresh receipt (iOS 7+ only)
+In certain cases StoreKit will "respawn" old purchases, as if they were new. This can make a cancelled purchase look paid, or vice versa. If the respawn comes back before your new payment, RMStore will use it instead of the "real" one and send it to the complete-block. The second payment request will be ignored.
 
-```objective-c
-[[RMStore defaultStore] refreshReceiptOnSuccess:^{
-    NSLog(@"Receipt refreshed");
-} failure:^(NSError *error) {
-    NSLog(@"Something went wrong");
-}];
-```
+At worst this leads to customers missing their purchased goods, and cannot be handled with a block approach, since storekit isn't built for that.
 
-##Notifications
+####When are there respawns?
 
-RMStore sends notifications of StoreKit related events and extends `NSNotification` to provide relevant information. To receive them, implement the desired methods of the `RMStoreObserver` protocol and add the observer to `RMStore`.
+1. When a subscription is bought that has not yet expired. 
+2. When the internet connection on the divice is bad storeKit can sometimes assume that the device never got the first message - and send them again, (this is a guess but it seems to behave like that). The result is respawned purchases, which you cannot match together afterwards.
+3. When you expect it the least.
 
-###Adding and removing the observer
+Also when the app starts from having a non-completed transaction in the queue, it will seem as an old purchase coming back to life - but it could just as well be that the user quit your app before the finishTransaction: message was received (or sent depending on the situation). In either case, RMStore will not have a block and not know how to handle that situation. If the user is fast and on a slow network, discovers that the previous purchase did not make it through and makes a new one - you will have something behaving as a respawn.
 
-```objective-c
-[[RMStore defaultStore] addStoreObserver:self];
-...
-[[RMStore defaultStore] removeStoreObserver:self];
-```
-
-###Products request notifications
-
-```objective-c
-- (void)storeProductsRequestFailed:(NSNotification*)notification
-{
-    NSError *error = notification.rm_storeError;
-}
-
-- (void)storeProductsRequestFinished:(NSNotification*)notification
-{
-    NSArray *products = notification.rm_products;
-    NSArray *invalidProductIdentifiers = notification.rm_invalidProductIdentififers;
-}
-```
-
-###Payment transaction notifications
-
-Payment transaction notifications are sent after a payment has been requested or for each restored transaction.
-
-```objective-c
-- (void)storePaymentTransactionFinished:(NSNotification*)notification
-{
-    NSString *productIdentifier = notification.rm_productIdentifier;
-    SKPaymentTransaction *transaction = notification.rm_transaction;
-}
-
-- (void)storePaymentTransactionFailed:(NSNotification*)notification
-{
-    NSError *error = notification.rm_storeError;
-    NSString *productIdentifier = notification.rm_productIdentifier;
-    SKPaymentTransaction *transaction = notification.rm_transaction;
-}
-
-// iOS 8+ only
-
-- (void)storePaymentTransactionDeferred:(NSNotification*)notification
-{
-    NSString *productIdentifier = notification.rm_productIdentifier;
-    SKPaymentTransaction *transaction = notification.rm_transaction;
-}
-```
-
-###Restore transactions notifications
-
-```objective-c
-- (void)storeRestoreTransactionsFailed:(NSNotification*)notification;
-{
-    NSError *error = notification.rm_storeError;
-}
-
-- (void)storeRestoreTransactionsFinished:(NSNotification*)notification
-{
-	NSArray *transactions = notification.rm_transactions;
-}
-```
-
-###Download notifications (iOS 6+ only)
-
-For Apple-hosted and self-hosted downloads:
-
-```objective-c
-- (void)storeDownloadFailed:(NSNotification*)notification
-{
-    SKDownload *download = notification.rm_storeDownload; // Apple-hosted only
-    NSString *productIdentifier = notification.rm_productIdentifier;
-    SKPaymentTransaction *transaction = notification.rm_transaction;
-    NSError *error = notification.rm_storeError;
-}
-
-- (void)storeDownloadFinished:(NSNotification*)notification;
-{
-    SKDownload *download = notification.rm_storeDownload; // Apple-hosted only
-    NSString *productIdentifier = notification.rm_productIdentifier;
-    SKPaymentTransaction *transaction = notification.rm_transaction;
-}
-
-- (void)storeDownloadUpdated:(NSNotification*)notification
-{
-    SKDownload *download = notification.rm_storeDownload; // Apple-hosted only
-    NSString *productIdentifier = notification.rm_productIdentifier;
-    SKPaymentTransaction *transaction = notification.rm_transaction;
-    float progress = notification.rm_downloadProgress;
-}
-```
-
-Only for Apple-hosted downloads:
-
-```objective-c
-- (void)storeDownloadCanceled:(NSNotification*)notification
-{
-	SKDownload *download = notification.rm_storeDownload;
-    NSString *productIdentifier = notification.rm_productIdentifier;
-    SKPaymentTransaction *transaction = notification.rm_transaction;
-}
-
-- (void)storeDownloadPaused:(NSNotification*)notification
-{
-	SKDownload *download = notification.rm_storeDownload;
-    NSString *productIdentifier = notification.rm_productIdentifier;
-    SKPaymentTransaction *transaction = notification.rm_transaction;
-}
-```
-
-###Refresh receipt notifications (iOS 7+ only)
-
-```objective-c
-- (void)storeRefreshReceiptFailed:(NSNotification*)notification;
-{
-    NSError *error = notification.rm_storeError;
-}
-
-- (void)storeRefreshReceiptFinished:(NSNotification*)notification { }
-```
-
-##Receipt verification
-
-RMStore doesn't perform receipt verification by default but provides reference implementations. You can implement your own custom verification or use the reference verifiers provided by the library.
-
-Both options are outlined below. For more info, check out the [wiki](https://github.com/robotmedia/RMStore/wiki/Receipt-verification).
-
-###Reference verifiers
-
-RMStore provides receipt verification via `RMStoreAppReceiptVerifier` (for iOS 7 or higher) and `RMStoreTransactionReceiptVerifier` (for iOS 6 or lower). To use any of them, add the corresponding files from [RMStore/Optional](https://github.com/robotmedia/RMStore/tree/master/RMStore/Optional) into your project and set the verifier delegate (`receiptVerifier`) at startup. For example:
-
-```objective-c
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
-{
-    const BOOL iOS7OrHigher = floor(NSFoundationVersionNumber) > NSFoundationVersionNumber_iOS_6_1;
-    _receiptVerifier = iOS7OrHigher ? [[RMStoreAppReceiptVerifier alloc] init] : [[RMStoreTransactionReceiptVerifier alloc] init];
-    [RMStore defaultStore].receiptVerifier = _receiptVerifier;
-    // Your code
-    return YES;
-}
-```
-
-If security is a concern you might want to avoid using an open source verification logic, and provide your own custom verifier instead.
-
-###Custom verifier
-
-RMStore delegates receipt verification, enabling you to provide your own implementation using  the `RMStoreReceiptVerifier` protocol:
-
-```objective-c
-- (void)verifyTransaction:(SKPaymentTransaction*)transaction
-                           success:(void (^)())successBlock
-                           failure:(void (^)(NSError *error))failureBlock;
-```
-
-Call `successBlock` if the receipt passes verification, and `failureBlock` if it doesn't. If verification could not be completed (e.g., due to connection issues), then `error` must be of code `RMStoreErrorCodeUnableToCompleteVerification` to prevent RMStore to finish the transaction.
-
-You will also need to set the `receiptVerifier` delegate at startup, as indicated above.
-
-##Downloading content
-
-RMStore automatically downloads Apple-hosted content and provides a delegate for a self-hosted content.
-
-###Apple-hosted content
-
-Downloadable content hosted by Apple (`SKDownload`) will be automatically downloaded when purchasing o restoring a product. RMStore will notify observers of the download progress by calling `storeDownloadUpdate:` and finally `storeDownloadFinished:`. Additionally, RMStore notifies when downloads are paused, cancelled or have failed.
-
-RMStore will notify that a transaction finished or failed only after all of its downloads have been processed. If you use blocks, they will called afterwards as well. The same applies to restoring transactions.
-
-###Self-hosted content
-
-RMStore delegates the downloading of self-hosted content via the optional `contentDownloader` delegate. You can provide your own implementation using the `RMStoreContentDownloader` protocol:
-
-```objective-c
-- (void)downloadContentForTransaction:(SKPaymentTransaction*)transaction
-                              success:(void (^)())successBlock
-                             progress:(void (^)(float progress))progressBlock
-                              failure:(void (^)(NSError *error))failureBlock;
-```
-
-Call `successBlock` if the download is successful, `failureBlock` if it isn't and `progressBlock` to notify the download progress. RMStore will consider that a transaction has finished or failed only after the content downloader delegate has successfully or unsuccessfully downloaded its content.
-
-##Transaction persistence
-
-RMStore delegates transaction persistence and provides two optional reference implementations for storing transactions in the Keychain or in `NSUserDefaults`. You can implement your transaction, use the reference implementations provided by the library or, in the case of non-consumables and auto-renewable subscriptions, get the transactions directly from the receipt.
-
-For more info, check out the [wiki](https://github.com/robotmedia/RMStore/wiki/Transaction-persistence).
-
-
-##Requirements
-
-RMStore requires iOS 5.0 or above and ARC.
-
-##Roadmap
-
-RMStore is in initial development and its public API should not be considered stable. Future enhancements will include:
-
-* [Better OS X support](https://github.com/robotmedia/RMStore/issues/4)
+RMStore can handle most of these cases by reporting all purchases through regular delegate callbacks or notifications, but then the point of having blocks in the first place is gone.
 
 ##License
 
